@@ -1,18 +1,19 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   CheckCircle2,
   ClipboardCheck,
   Disc,
+  Loader2,
   Mic,
-  PauseCircle,
   PlayCircle,
   RefreshCw,
   Sparkle,
+  StopCircle,
   UploadCloud,
 } from "lucide-react";
 
-import { activeSession, sessionHistory, type MedAssistSegment } from "@/data/medassist";
+import type { MedAssistSegment, MedAssistSession, MedAssistSuggestion } from "@/data/medassist";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,6 +21,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { formatDate, formatTime } from "@/lib/datetime";
 import { cn, formatPercent } from "@/lib/utils";
+import type { MedAssistAiSummaryResult } from "@/features/medassist/api/medassist-ai";
+import {
+  type RecorderStatus,
+  type SummaryStatus,
+  useMedAssistRecorder,
+} from "@/features/medassist/hooks/use-medassist-recorder";
+import { useMedAssistStore } from "@/features/medassist/store/medassist-store";
 
 const statusLabel: Record<string, string> = {
   entwurf: "Entwurf",
@@ -34,14 +42,98 @@ const statusTone: Record<string, { badge: string; dot: string }> = {
 };
 
 export function MedAssistPage() {
-  const [isRecording, setIsRecording] = useState(false);
+  const activeSession = useMedAssistStore((state) => state.activeSession);
+  const history = useMedAssistStore((state) => state.history);
+  const applyAiSummary = useMedAssistStore((state) => state.applyAiSummary);
+  const updateSegment = useMedAssistStore((state) => state.updateSegment);
   const [autoFormatting, setAutoFormatting] = useState(true);
-  const [selectedSegment, setSelectedSegment] = useState<MedAssistSegment>(activeSession.segments[0]!);
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string | null>(
+    activeSession.segments[0]?.id ?? null,
+  );
+
+  useEffect(() => {
+    if (!activeSession.segments.length) {
+      setSelectedSegmentId(null);
+      return;
+    }
+    if (!selectedSegmentId || !activeSession.segments.some((segment) => segment.id === selectedSegmentId)) {
+      setSelectedSegmentId(activeSession.segments[0]!.id);
+    }
+  }, [activeSession.segments, selectedSegmentId]);
+
+  const selectedSegment = useMemo(() => {
+    if (!activeSession.segments.length) {
+      return null;
+    }
+    return (
+      activeSession.segments.find((segment) => segment.id === selectedSegmentId) ??
+      activeSession.segments[0] ??
+      null
+    );
+  }, [activeSession.segments, selectedSegmentId]);
+
+  const handleSummary = useCallback(
+    (summary: MedAssistAiSummaryResult) => {
+      applyAiSummary(summary);
+    },
+    [applyAiSummary],
+  );
+
+  const handleRecorderError = useCallback((message: string) => {
+    console.error("[MedAssist Recorder]", message);
+  }, []);
+
+  const {
+    isSupported: recorderSupported,
+    status: recorderStatus,
+    summaryStatus,
+    isRecording,
+    isProcessing,
+    error: recorderError,
+    elapsedSeconds: liveElapsedSeconds,
+    hasRecording,
+    start: startRecording,
+    stop: stopRecording,
+    summarize: summarizeRecording,
+    resetError,
+  } = useMedAssistRecorder({
+    autoFormatting,
+    locale: "de-DE",
+    patientContext: {
+      patient: activeSession.patient,
+      arzt: activeSession.arzt,
+      sessionId: activeSession.id,
+    },
+    summarizeOnStop: true,
+    onSummary: handleSummary,
+    onError: handleRecorderError,
+  });
 
   const recordingElapsed = useMemo(() => {
-    const base = activeSession.durationSeconds;
-    return isRecording ? base + 12 : base;
-  }, [isRecording]);
+    const base = activeSession.durationSeconds ?? 0;
+    if (isRecording) {
+      return base + liveElapsedSeconds;
+    }
+    return base;
+  }, [activeSession.durationSeconds, isRecording, liveElapsedSeconds]);
+
+  const handleToggleRecording = useCallback(async () => {
+    resetError();
+    if (isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
+  }, [isRecording, resetError, startRecording, stopRecording]);
+
+  const handleSummarize = useCallback(async () => {
+    resetError();
+    await summarizeRecording();
+  }, [resetError, summarizeRecording]);
+
+  const handleSegmentSelect = useCallback((segment: MedAssistSegment) => {
+    setSelectedSegmentId(segment.id);
+  }, []);
 
   return (
     <div className="flex flex-col gap-6">
@@ -65,22 +157,32 @@ export function MedAssistPage() {
       <div className="grid gap-5 xl:grid-cols-[1.65fr_1fr]">
         <div className="flex flex-col gap-5">
           <RecordingPanel
+            session={activeSession}
             isRecording={isRecording}
-            onToggle={() => setIsRecording((prev) => !prev)}
+            isSupported={recorderSupported}
+            status={recorderStatus}
+            summaryStatus={summaryStatus}
+            isProcessing={isProcessing}
+            error={recorderError}
             elapsedSeconds={recordingElapsed}
             autoFormatting={autoFormatting}
             onAutoFormatting={setAutoFormatting}
+            onToggleRecording={handleToggleRecording}
+            onSummarize={handleSummarize}
+            hasRecording={hasRecording}
           />
           <StructuredComposer
             selected={selectedSegment}
             segments={activeSession.segments}
-            onSelect={setSelectedSegment}
+            lastEdited={activeSession.lastEdited}
+            onSelect={handleSegmentSelect}
+            onUpdateSegment={updateSegment}
           />
         </div>
 
         <div className="flex flex-col gap-5">
-          <SuggestionsPanel />
-          <SessionHistory />
+          <SuggestionsPanel suggestions={activeSession.suggestions} summaryStatus={summaryStatus} />
+          <SessionHistory history={history} />
         </div>
       </div>
     </div>
@@ -88,17 +190,33 @@ export function MedAssistPage() {
 }
 
 function RecordingPanel({
+  session,
   isRecording,
-  onToggle,
+  isSupported,
+  status,
+  summaryStatus,
+  isProcessing,
+  error,
   elapsedSeconds,
   autoFormatting,
   onAutoFormatting,
+  onToggleRecording,
+  onSummarize,
+  hasRecording,
 }: {
+  session: MedAssistSession;
   isRecording: boolean;
-  onToggle: () => void;
+  isSupported: boolean;
+  status: RecorderStatus;
+  summaryStatus: SummaryStatus;
+  isProcessing: boolean;
+  error: string | null;
   elapsedSeconds: number;
   autoFormatting: boolean;
   onAutoFormatting: (value: boolean) => void;
+  onToggleRecording: () => Promise<void>;
+  onSummarize: () => Promise<void>;
+  hasRecording: boolean;
 }) {
   const minutes = Math.floor(elapsedSeconds / 60)
     .toString()
@@ -106,6 +224,52 @@ function RecordingPanel({
   const seconds = Math.floor(elapsedSeconds % 60)
     .toString()
     .padStart(2, "0");
+
+  const badgeTone = !isSupported
+    ? "bg-muted-foreground/30"
+    : summaryStatus === "processing"
+      ? "bg-warning"
+      : isRecording
+        ? "bg-destructive"
+        : "bg-success";
+  const badgeLabel = !isSupported
+    ? "Mikrofon nicht verfuegbar"
+    : summaryStatus === "processing"
+      ? "Verarbeitung"
+      : status === "requesting-permission"
+        ? "Zugriff anfordern"
+        : isRecording
+          ? "Aufnahme aktiv"
+          : hasRecording
+            ? "Aufnahme bereit"
+            : "Bereit";
+
+  const primaryDisabled =
+    !isSupported || isProcessing || status === "requesting-permission" || status === "stopping";
+  const primaryLabel = !isSupported
+    ? "Geraet nicht unterstuetzt"
+    : status === "requesting-permission"
+      ? "Mikrofon erlauben"
+      : status === "stopping"
+        ? "Beende Aufnahme..."
+        : isProcessing
+          ? "Verarbeitung laeuft"
+          : isRecording
+            ? "Aufnahme stoppen"
+            : "Aufnahme starten";
+  const primaryIcon =
+    isProcessing || status === "requesting-permission" || status === "stopping" ? (
+      <Loader2 className="size-5 animate-spin" />
+    ) : isRecording ? (
+      <StopCircle className="size-5" />
+    ) : (
+      <PlayCircle className="size-5" />
+    );
+
+  const canAddMarker = isRecording && !isProcessing;
+  const canSummarize = hasRecording && !isProcessing;
+  const summaryLabel = isProcessing ? "Zusammenfassung laeuft..." : "KI Zusammenfassung";
+  const summaryIcon = isProcessing ? <Loader2 className="size-5 animate-spin" /> : <Sparkle className="size-5" />;
 
   return (
     <Card className="overflow-hidden">
@@ -121,54 +285,78 @@ function RecordingPanel({
             </div>
           </div>
           <Badge variant="outline" className="gap-2 rounded-full border-primary/30 text-primary">
-            <span className={cn("inline-flex size-2 rounded-full", isRecording ? "bg-destructive" : "bg-success")}></span>
-            {isRecording ? "Aufnahme aktiv" : "Bereit"}
+            <span className={cn("inline-flex size-2 rounded-full", badgeTone)}></span>
+            {badgeLabel}
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <span className="rounded-full bg-surface-100 px-4 py-2 font-mono text-foreground/80">{minutes}:{seconds}</span>
-          <span className="text-muted-foreground/80">
-            Arzt: <strong className="text-foreground/85">{activeSession.arzt}</strong>
+          <span className="rounded-full bg-surface-100 px-4 py-2 font-mono text-foreground/80">
+            {minutes}:{seconds}
           </span>
           <span className="text-muted-foreground/80">
-            Patient: <strong className="text-foreground/85">{activeSession.patient.name}</strong>
+            Arzt: <strong className="text-foreground/85">{session.arzt}</strong>
+          </span>
+          <span className="text-muted-foreground/80">
+            Patient: <strong className="text-foreground/85">{session.patient.name}</strong>
           </span>
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-5 pt-5">
         <div className="rounded-2xl border border-border/40 bg-gradient-to-r from-primary/5 via-primary/10 to-primary/5 p-4 shadow-inner">
           <div className="flex items-center justify-between text-sm text-muted-foreground/80">
-            <span>Rauschunterdrückung aktiv</span>
-            <span>DSGVO Audit Trail erstellt {formatTime(activeSession.lastEdited)}</span>
+            <span>Rauschunterdrueckung aktiv</span>
+            <span>DSGVO Audit Trail erstellt {formatTime(session.lastEdited)}</span>
           </div>
           <div className="mt-4 h-20 rounded-xl bg-black/5">
-            <div className="h-full w-full animate-pulse rounded-xl bg-gradient-to-r from-primary/40 via-primary/10 to-primary/40 opacity-70" />
+            <div
+              className={cn(
+                "h-full w-full rounded-xl bg-gradient-to-r from-primary/40 via-primary/10 to-primary/40",
+                isRecording ? "animate-pulse opacity-80" : "opacity-40",
+              )}
+            />
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <Button
-            onClick={onToggle}
+            onClick={onToggleRecording}
             variant={isRecording ? "destructive" : "solid"}
             size="lg"
             className="flex-1 gap-2 rounded-full"
+            disabled={primaryDisabled}
           >
-            {isRecording ? <PauseCircle className="size-5" /> : <PlayCircle className="size-5" />}
-            {isRecording ? "Aufnahme pausieren" : "Aufnahme starten"}
+            {primaryIcon}
+            {primaryLabel}
           </Button>
-          <Button variant="outline" size="lg" className="flex-1 gap-2 rounded-full">
+          <Button
+            variant="outline"
+            size="lg"
+            className="flex-1 gap-2 rounded-full"
+            disabled={!canAddMarker}
+          >
             <Disc className="size-5" /> Marker setzen
           </Button>
-          <Button variant="outline" size="lg" className="gap-2 rounded-full">
-            <Sparkle className="size-5" /> KI Zusammenfassung
+          <Button
+            onClick={onSummarize}
+            variant="outline"
+            size="lg"
+            className="gap-2 rounded-full"
+            disabled={!canSummarize}
+          >
+            {summaryIcon} {summaryLabel}
           </Button>
+        </div>
+        <div className="flex flex-col gap-2 text-sm">
+          {error ? (
+            <span className="rounded-lg bg-destructive/10 px-3 py-2 text-destructive">{error}</span>
+          ) : summaryStatus === "processing" ? (
+            <span className="rounded-lg bg-primary/10 px-3 py-2 text-primary">
+              KI analysiert die Aufnahme und aktualisiert den Befund...
+            </span>
+          ) : null}
         </div>
         <div className="flex items-center justify-between rounded-xl border border-border/40 bg-surface-100/70 px-4 py-3 text-sm">
           <div className="flex items-center gap-3">
-            <Switch
-              checked={autoFormatting}
-              onCheckedChange={onAutoFormatting}
-              aria-label="Auto-Formatierung"
-            />
+            <Switch checked={autoFormatting} onCheckedChange={onAutoFormatting} aria-label="Auto-Formatierung" />
             <span className="text-muted-foreground">Automatische Strukturierung aktivieren</span>
           </div>
           <Button variant="ghost" size="sm" className="gap-2 text-xs text-muted-foreground">
@@ -183,17 +371,35 @@ function RecordingPanel({
 function StructuredComposer({
   selected,
   segments,
+  lastEdited,
   onSelect,
+  onUpdateSegment,
 }: {
-  selected: MedAssistSegment;
+  selected: MedAssistSegment | null;
   segments: MedAssistSegment[];
+  lastEdited: string;
   onSelect: (segment: MedAssistSegment) => void;
+  onUpdateSegment: (id: string, changes: Partial<Omit<MedAssistSegment, "id">>) => void;
 }) {
+  if (!segments.length || !selected) {
+    return (
+      <Card className="overflow-hidden">
+        <CardHeader className="border-b border-border/50 pb-4">
+          <CardTitle>Strukturierte Befundausgabe</CardTitle>
+          <CardDescription>Anamnese, Befund, Diagnosen und Therapie werden KI-gest�tzt aufbereitet.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex min-h-[220px] items-center justify-center text-sm text-muted-foreground">
+          Noch keine Segmente verf�gbar. Nehmen Sie eine Sitzung auf, um Inhalte zu generieren.
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="overflow-hidden">
       <CardHeader className="border-b border-border/50 pb-4">
         <CardTitle>Strukturierte Befundausgabe</CardTitle>
-        <CardDescription>Anamnese, Befund, Diagnosen und Therapie werden KI-gestützt aufbereitet.</CardDescription>
+        <CardDescription>Anamnese, Befund, Diagnosen und Therapie werden KI-gest�tzt aufbereitet.</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-6 lg:grid-cols-[260px_1fr]">
         <aside className="flex flex-col gap-2">
@@ -225,14 +431,17 @@ function StructuredComposer({
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
               <h3 className="text-lg font-semibold text-foreground/90">{selected.label}</h3>
-              <p className="text-xs text-muted-foreground/80">Bearbeitet {formatDate(activeSession.lastEdited)} um {formatTime(activeSession.lastEdited)}</p>
+              <p className="text-xs text-muted-foreground/80">
+                Bearbeitet {formatDate(lastEdited)} um {formatTime(lastEdited)}
+              </p>
             </div>
             <Button variant="outline" size="sm" className="rounded-full">
               Version vergleichen
             </Button>
           </div>
           <Textarea
-            defaultValue={selected.content}
+            value={selected.content}
+            onChange={(event) => onUpdateSegment(selected.id, { content: event.target.value })}
             className="min-h-[220px] border border-primary/25 bg-white/90"
           />
           {selected.suggestions && selected.suggestions.length ? (
@@ -250,7 +459,7 @@ function StructuredComposer({
               DSGVO Audit Trail aktiv
             </Badge>
             <Badge variant="outline" size="sm">
-              Automatische GOÄ Zuordnung vorbereitet
+              Automatische GO� Zuordnung vorbereitet
             </Badge>
             <Button variant="ghost" size="sm" className="gap-1 text-xs">
               <Activity className="size-3.5" /> Verlauf
@@ -261,11 +470,17 @@ function StructuredComposer({
     </Card>
   );
 }
-
-function SuggestionsPanel() {
-  const icd = activeSession.suggestions.filter((item) => item.type === "icd");
-  const goa = activeSession.suggestions.filter((item) => item.type === "goa");
-  const warnings = activeSession.suggestions.filter((item) => item.type === "hinweis");
+function SuggestionsPanel({
+  suggestions,
+  summaryStatus,
+}: {
+  suggestions: MedAssistSuggestion[];
+  summaryStatus: SummaryStatus;
+}) {
+  const icd = suggestions.filter((item) => item.type === "icd");
+  const goa = suggestions.filter((item) => item.type === "goa");
+  const warnings = suggestions.filter((item) => item.type === "hinweis");
+  const hasSuggestions = suggestions.length > 0;
 
   return (
     <Card>
@@ -274,9 +489,22 @@ function SuggestionsPanel() {
         <CardDescription>ICD-10, GOÄ und Hinweise mit Confidence-Werten.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
-        <SuggestionGroup title="Diagnosen" items={icd} tone="primary" />
-        <SuggestionGroup title="GOÄ Ziffern" items={goa} tone="secondary" />
-        <SuggestionGroup title="Hinweise" items={warnings} tone="warning" />
+        {summaryStatus === "processing" ? (
+          <div className="rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-primary">
+            KI analysiert die aktuelle Aufnahme – Vorschläge werden gleich aktualisiert.
+          </div>
+        ) : null}
+        {hasSuggestions ? (
+          <>
+            <SuggestionGroup title="Diagnosen" items={icd} tone="primary" />
+            <SuggestionGroup title="GOÄ Ziffern" items={goa} tone="secondary" />
+            <SuggestionGroup title="Hinweise" items={warnings} tone="warning" />
+          </>
+        ) : (
+          <p className="rounded-xl border border-dashed border-border/60 bg-surface-100/60 px-4 py-6 text-center text-sm text-muted-foreground">
+            Noch keine KI-Vorschläge verfügbar. Starten Sie eine Aufnahme oder laden Sie Ergebnisse neu.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -288,7 +516,7 @@ function SuggestionGroup({
   tone,
 }: {
   title: string;
-  items: typeof activeSession.suggestions;
+  items: MedAssistSuggestion[];
   tone: "primary" | "secondary" | "warning";
 }) {
   if (!items.length) return null;
@@ -317,10 +545,12 @@ function SuggestionGroup({
                 <span className="font-semibold text-foreground/90">{item.title}</span>
               </div>
               <Badge variant="muted" size="sm">
-                Confidence {formatPercent(item.confidence)}
+                Confidence {formatPercent(item.confidence ?? 0)}
               </Badge>
             </div>
-            <p className="mt-1 text-sm text-muted-foreground/85">{item.description}</p>
+            {item.description ? (
+              <p className="mt-1 text-sm text-muted-foreground/85">{item.description}</p>
+            ) : null}
             <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground/70">
               <Button variant="outline" size="xs" className="rounded-full">
                 Übernehmen
@@ -339,7 +569,11 @@ function SuggestionGroup({
   );
 }
 
-function SessionHistory() {
+function SessionHistory({
+  history,
+}: {
+  history: MedAssistSession[];
+}) {
   return (
     <Card>
       <CardHeader>
@@ -347,7 +581,7 @@ function SessionHistory() {
         <CardDescription>Verlauf der letzten AI-MedAssist Dokumente.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3 text-sm">
-        {sessionHistory.map((session) => {
+        {history.map((session) => {
           const tone = statusTone[session.status];
           return (
             <div
@@ -380,3 +614,5 @@ function SessionHistory() {
     </Card>
   );
 }
+
+

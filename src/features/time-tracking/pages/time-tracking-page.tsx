@@ -523,7 +523,7 @@ function EmployeeTimeAccountDetails({
             <Button type="button" size="sm" variant="outline" onClick={onEndBreak} disabled={disableEndBreak}>
               Pause beenden
             </Button>
-            <Button type="button" size="sm" variant="secondary" onClick={onClockOut} disabled={disableClockOut}>
+            <Button type="button" size="sm" tone="secondary" onClick={onClockOut} disabled={disableClockOut}>
               Arbeitsende
             </Button>
           </div>
