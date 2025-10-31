@@ -21,11 +21,11 @@ import { cn, formatCurrency } from "@/lib/utils";
 import { formatDate, formatDateTime } from "@/lib/datetime";
 
 const DEFAULT_RECEIPT_TEMPLATE = [
-  "Privatrechnung nach GOÃ â Individuelle Gesundheitsleistung (IGeL)",
+  "Privatrechnung nach GOÄ – Individuelle Gesundheitsleistung (IGeL)",
   "",
-  "Praxis fÃ¼r OrthopÃ¤die & Unfallchirurgie",
+  "Praxis für Orthopädie & Unfallchirurgie",
   "Ozobia Samuel Mgbor",
-  "PoststraÃe 37a 46562 Voerde",
+  "Poststraße 37a 46562 Voerde",
   "Tel.: 0281 / 41020 Fax: 0281 / 46227",
   "",
   "Patient/in: {{patient}}",
@@ -153,16 +153,16 @@ export function IgelKassenbuchPage() {
 
   const templateTokens = useMemo(
     () => ({
-      "{{patient}}": patient.trim() || "â",
-      "{{patientNumber}}": patientNumber.trim() || "â",
-      "{{service}}": selectedService?.treatment ?? "â",
+      "{{patient}}": patient.trim() || "-",
+      "{{patientNumber}}": patientNumber.trim() || "-",
+      "{{service}}": selectedService?.treatment ?? "-",
       "{{quantity}}": normalizedQuantity.toString(),
-      "{{unitPrice}}": selectedService ? formatCurrency(selectedService.price) : "â",
+      "{{unitPrice}}": selectedService ? formatCurrency(selectedService.price) : "-",
       "{{total}}": formatCurrency(expectedTotal),
       "{{paid}}": formatCurrency(paidAmount),
       "{{rest}}": formatCurrency(restAmount),
       "{{paymentMethod}}": paymentMethod,
-      "{{collector}}": collector || "â",
+      "{{collector}}": collector || "-",
       "{{date}}": formatDate(new Date()),
     }),
     [
@@ -481,10 +481,10 @@ export function IgelKassenbuchPage() {
           <thead>
             <tr>
               <th>Leistungsschritt</th>
-              <th>GOÃ-Nr.</th>
+              <th>GOÄ-Nr.</th>
               <th>Faktor</th>
               <th>Einheit</th>
-              <th>Betrag (â¬)</th>
+              <th>Betrag (€)</th>
             </tr>
           </thead>
           <tbody>
@@ -495,7 +495,7 @@ export function IgelKassenbuchPage() {
               <td>${escapeHtml(line.step)}</td>
               <td>${escapeHtml(line.code)}</td>
               <td>${escapeHtml(line.factor)}</td>
-              <td>${escapeHtml(line.unit ?? "â")}</td>
+              <td>${escapeHtml(line.unit ?? "-")}</td>
               <td>${escapeHtml(formatCurrency(line.amount))}</td>
             </tr>`,
               )
@@ -529,7 +529,7 @@ export function IgelKassenbuchPage() {
       </section>
       ${additionalSection}
       ${notesSection}
-      <footer>Vielen Dank fÃ¼r Ihr Vertrauen. Bitte wenden Sie sich bei RÃ¼ckfragen an die Praxis.</footer>
+      <footer>Vielen Dank für Ihr Vertrauen. Bitte wenden Sie sich bei Rückfragen an die Praxis.</footer>
     </div>
   </body>
 </html>`;
@@ -697,7 +697,7 @@ export function IgelKassenbuchPage() {
                 {receiptMessage ? (
                   <span className="text-emerald-600">{receiptMessage}</span>
                 ) : receiptDirty ? (
-                  <span className="text-muted-foreground/70">Nicht gespeicherte Ãnderungen.</span>
+                  <span className="text-muted-foreground/70">Nicht gespeicherte Änderungen.</span>
                 ) : null}
               </div>
               <Button
@@ -723,62 +723,66 @@ export function IgelKassenbuchPage() {
                 {formatCurrency(goaPreviewTotal)}
               </span>
             </div>
-            <div className="rounded-xl border border-border/40 bg-white/80">
+            <div className="overflow-hidden rounded-xl border border-border/40 bg-white/90">
               {goaRows.length ? (
-                <table className="w-full border-collapse text-sm">
-                  <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground/80">
-                    <tr>
-                      <th className="px-3 py-2 text-left">Schritt</th>
-                      <th className="px-3 py-2 text-left">GOÄ</th>
-                      <th className="px-3 py-2 text-left">Faktor</th>
-                      <th className="px-3 py-2 text-left">Einheit</th>
-                      <th className="px-3 py-2 text-right">Basisbetrag</th>
-                      <th className="px-3 py-2 text-right">Aktuell</th>
-                      <th className="px-3 py-2 text-right">Aktionen</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {goaRows.map((row, index) => {
-                      const previewLine = goaPreview[index];
-                      return (
-                        <tr key={`${row.code}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-muted/40"}>
-                          <td className="px-3 py-2 align-top">
-                            <Input value={row.step} onChange={(event) => handleGoaRowChange(index, "step", event.target.value)} />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <Input value={row.code} onChange={(event) => handleGoaRowChange(index, "code", event.target.value)} />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <Input value={row.factor} onChange={(event) => handleGoaRowChange(index, "factor", event.target.value)} />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <Input value={row.unit} onChange={(event) => handleGoaRowChange(index, "unit", event.target.value)} />
-                          </td>
-                          <td className="px-3 py-2 align-top">
-                            <Input
-                              value={row.amount}
-                              inputMode="decimal"
-                              onChange={(event) => handleGoaRowChange(index, "amount", event.target.value)}
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-right align-top font-semibold">{previewLine ? formatCurrency(previewLine.amount) : ""}</td>
-                          <td className="px-3 py-2 text-right align-top">
-                            <Button
-                              type="button"
-                              size="icon"
-                              variant="ghost"
-                              className="size-8 text-destructive hover:text-destructive"
-                              onClick={() => handleRemoveGoaRow(index)}
-                              aria-label="Position entfernen"
-                            >
-                              <Trash2 className="size-4" />
-                            </Button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[720px] border-collapse text-sm">
+                    <thead className="bg-muted/60 text-xs uppercase tracking-wide text-muted-foreground/80">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Leistungsbeschreibung</th>
+                        <th className="px-3 py-2 text-left">GOÄ</th>
+                        <th className="px-3 py-2 text-left">Faktor</th>
+                        <th className="px-3 py-2 text-left">Einheit</th>
+                        <th className="px-3 py-2 text-right">Basisbetrag</th>
+                        <th className="px-3 py-2 text-right">Aktuell</th>
+                        <th className="px-3 py-2 text-right">Aktionen</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {goaRows.map((row, index) => {
+                        const previewLine = goaPreview[index];
+                        return (
+                          <tr key={`${row.code}-${index}`} className={index % 2 === 0 ? "bg-white" : "bg-muted/40"}>
+                            <td className="px-3 py-2 align-top">
+                              <Input value={row.step} onChange={(event) => handleGoaRowChange(index, "step", event.target.value)} />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input value={row.code} onChange={(event) => handleGoaRowChange(index, "code", event.target.value)} />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input value={row.factor} onChange={(event) => handleGoaRowChange(index, "factor", event.target.value)} />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input value={row.unit} onChange={(event) => handleGoaRowChange(index, "unit", event.target.value)} />
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <Input
+                                value={row.amount}
+                                inputMode="decimal"
+                                onChange={(event) => handleGoaRowChange(index, "amount", event.target.value)}
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-right align-top font-semibold">
+                              {previewLine ? formatCurrency(previewLine.amount) : "-"}
+                            </td>
+                            <td className="px-3 py-2 text-right align-top">
+                              <Button
+                                type="button"
+                                size="icon"
+                                variant="ghost"
+                                className="size-8 text-destructive hover:text-destructive"
+                                onClick={() => handleRemoveGoaRow(index)}
+                                aria-label="Position entfernen"
+                              >
+                                <Trash2 className="size-4" />
+                              </Button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               ) : (
                 <div className="rounded-lg border border-dashed border-border/40 bg-white/70 px-4 py-3 text-sm text-muted-foreground/70">
                   Keine Aufteilung definiert.
@@ -835,7 +839,7 @@ export function IgelKassenbuchPage() {
       <CardHeader className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <CardTitle>Kassenbuch</CardTitle>
-          <CardDescription>Alle VerkÃ¤ufe mit Such- und Datumsfilter.</CardDescription>
+          <CardDescription>Alle Verkäufe mit Such- und Datumsfilter.</CardDescription>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2 rounded-xl border border-border/50 bg-white/80 px-3 py-2 shadow-sm transition-all focus-within:ring-2 focus-within:ring-primary/40 focus-within:border-primary/40 hover:shadow-md">
@@ -875,6 +879,7 @@ export function IgelKassenbuchPage() {
                 <th className="px-3 py-2 text-right">Totalbetrag</th>
                 <th className="px-3 py-2 text-right">Gezahlt</th>
                 <th className="px-3 py-2 text-right">Restbetrag</th>
+                <th className="px-3 py-2 text-center">Status</th>
                 <th className="px-3 py-2">Notiz</th>
                 <th className="px-3 py-2">Mitarbeiter</th>
                 <th className="px-3 py-2 text-center">Zahlung</th>
@@ -889,7 +894,16 @@ export function IgelKassenbuchPage() {
                     ? transaction.amount / transaction.quantity
                     : service?.price ?? transaction.amount;
                 const totalAmount = Math.round(unitAmount * transaction.quantity * 100) / 100;
-                const remainingAmount = Math.max(totalAmount - transaction.paidAmount, 0);
+                const restRaw = Math.round((totalAmount - transaction.paidAmount) * 100) / 100;
+                const remainingAmount = Math.max(restRaw, 0);
+                const status =
+                  restRaw <= 0
+                    ? "Bezahlt"
+                    : Math.abs(restRaw - totalAmount) < 0.01
+                      ? "Offen"
+                      : "Teilzahlung";
+                const statusVariant: "success" | "warning" | "destructive" =
+                  status === "Bezahlt" ? "success" : status === "Teilzahlung" ? "warning" : "destructive";
                 return (
                   <tr
                     key={transaction.id}
@@ -898,7 +912,7 @@ export function IgelKassenbuchPage() {
                     <td className="px-3 py-3 text-sm text-muted-foreground/80">{formatDate(transaction.createdAt)}</td>
                     <td className="px-3 py-3 font-medium text-foreground/90">{transaction.patient}</td>
                     <td className="px-3 py-3 text-sm text-muted-foreground/80">{transaction.patientNumber}</td>
-                    <td className="px-3 py-3 text-sm text-muted-foreground/80">{service?.treatment ?? "GelÃ¶scht"}</td>
+                    <td className="px-3 py-3 text-sm text-muted-foreground/80">{service?.treatment ?? "Gelöscht"}</td>
                     <td className="px-3 py-3 text-center text-sm text-muted-foreground/80">{transaction.quantity}</td>
                     <td className="px-3 py-3 text-right text-sm text-muted-foreground/80">
                       {formatCurrency(unitAmount)}
@@ -912,7 +926,12 @@ export function IgelKassenbuchPage() {
                     <td className="px-3 py-3 text-right text-sm text-muted-foreground/70">
                       {formatCurrency(remainingAmount)}
                     </td>
-                    <td className="px-3 py-3 text-sm text-muted-foreground/80">{transaction.notes ?? "â"}</td>
+                    <td className="px-3 py-3 text-center text-xs">
+                      <Badge variant={statusVariant}>
+                        {status}
+                      </Badge>
+                    </td>
+                    <td className="px-3 py-3 text-sm text-muted-foreground/80">{transaction.notes ?? "-"}</td>
                     <td className="px-3 py-3 text-sm text-muted-foreground/80">{transaction.collector}</td>
                     <td className="px-3 py-3 text-center text-xs">
                       <Badge variant={transaction.paymentMethod === "Bar" ? "solid" : "outline"}>
@@ -935,7 +954,7 @@ export function IgelKassenbuchPage() {
                           size="icon"
                           className="rounded-full text-destructive hover:text-destructive"
                           onClick={() => deleteTransaction(transaction.id)}
-                          aria-label="Transaktion lÃ¶schen"
+                          aria-label="Transaktion löschen"
                         >
                           <Trash2 className="size-4" />
                         </Button>
@@ -948,7 +967,7 @@ export function IgelKassenbuchPage() {
           </table>
         ) : (
           <div className="rounded-2xl border border-dashed border-border/40 bg-white/80 p-6 text-center text-sm text-muted-foreground">
-            Keine Transaktionen im gewÃ¤hlten Zeitraum.
+            Keine Transaktionen im gewählten Zeitraum.
           </div>
         )}
       </CardContent>
@@ -970,7 +989,7 @@ export function IgelKassenbuchPage() {
         </div>
       </div>
 
-      <div className="grid gap-5 xl:grid-cols-[1.4fr_1fr]">
+      <div className="grid gap-5 lg:grid-cols-2">
         {renderPriceList()}
         {renderCheckout()}
       </div>
