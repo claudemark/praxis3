@@ -598,6 +598,7 @@ const CALENDAR_DAYS_ENDPOINT = "/calendar_days";
 type CalendarDayDbRecord = {
   id: string;
   date: string;
+  end_date: string | null;
   label: string;
   type: string;
   description: string | null;
@@ -609,6 +610,7 @@ type CalendarDayDbRecord = {
 const toCalendarDayAppModel = (db: CalendarDayDbRecord): CalendarDayEntry => ({
   id: db.id,
   date: db.date,
+  endDate: db.end_date || undefined,
   label: db.label,
   type: db.type as "public-holiday" | "company-holiday" | "vacation" | "bonus-holiday",
   description: db.description || undefined,
@@ -620,6 +622,7 @@ const toCalendarDayAppModel = (db: CalendarDayDbRecord): CalendarDayEntry => ({
 const toCalendarDayDbRecord = (day: Partial<CalendarDayEntry>): Partial<CalendarDayDbRecord> => ({
   id: day.id,
   date: day.date,
+  end_date: day.endDate ?? null,
   label: day.label,
   type: day.type,
   description: day.description || null,

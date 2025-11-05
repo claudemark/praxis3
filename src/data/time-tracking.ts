@@ -50,6 +50,7 @@ export type CalendarDayType = "public-holiday" | "company-holiday" | "bonus-holi
 export interface CalendarDayEntry {
   id: string;
   date: string;
+  endDate?: string;
   label: string;
   type: CalendarDayType;
   description?: string;
