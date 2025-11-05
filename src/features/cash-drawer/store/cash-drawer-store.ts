@@ -8,6 +8,13 @@ import {
   type CashMovementType,
   type CashDrawerSnapshot,
 } from "@/data/cash-drawer";
+import {
+  fetchCashMovementsFromSupabase,
+  fetchCashSnapshotsFromSupabase,
+  createCashMovementInSupabase,
+  createCashSnapshotInSupabase,
+} from "../api/cash-drawer-api";
+import { isSupabaseConfigured } from "@/services/supabase-client";
 
 interface RecordSalePayload {
   amount: number;
@@ -40,6 +47,10 @@ interface CashDrawerState {
   snapshots: CashDrawerSnapshot[];
   currentBalance: number;
   lastReconcile?: CashDrawerSnapshot;
+  isLoading: boolean;
+  error: string | null;
+  initialized: boolean;
+  fetchCashDrawer: () => Promise<void>;
   registerSale: (payload: RecordSalePayload) => CashMovement;
   registerExpense: (payload: RecordExpensePayload) => CashMovement;
   registerFloat: (payload: RecordFloatPayload) => CashMovement;
@@ -88,11 +99,70 @@ function deriveInitialBalance(movements: CashMovement[]): number {
   return sorted[0]!.balanceAfter;
 }
 
-export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
+export const useCashDrawerStore = create<CashDrawerState>((set, get) => {
+  const persistMovement = async (movement: CashMovement) => {
+    try {
+      const saved = await createCashMovementInSupabase(movement);
+      if (saved) {
+        set((state) => ({
+          movements: state.movements.map((m) => (m.id === movement.id ? saved : m)),
+        }));
+      }
+    } catch (error) {
+      console.error("[Cash Drawer Store] Failed to persist movement", error);
+    }
+  };
+
+  const persistSnapshot = async (snapshot: CashDrawerSnapshot) => {
+    try {
+      const saved = await createCashSnapshotInSupabase(snapshot);
+      if (saved) {
+        set((state) => ({
+          snapshots: state.snapshots.map((s) => (s.id === snapshot.id ? saved : s)),
+        }));
+      }
+    } catch (error) {
+      console.error("[Cash Drawer Store] Failed to persist snapshot", error);
+    }
+  };
+
+  return {
   movements: initialCashMovements.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()),
   snapshots: initialSnapshots.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime()),
   currentBalance: deriveInitialBalance(initialCashMovements),
   lastReconcile: initialSnapshots[0],
+  isLoading: false,
+  error: null,
+  initialized: false,
+  fetchCashDrawer: async () => {
+    console.log("[Cash Drawer Store] fetchCashDrawer called, configured:", isSupabaseConfigured);
+    if (!isSupabaseConfigured) {
+      set({ initialized: true });
+      return;
+    }
+    set({ isLoading: true, error: null });
+    try {
+      const [movements, snapshots] = await Promise.all([
+        fetchCashMovementsFromSupabase(),
+        fetchCashSnapshotsFromSupabase(),
+      ]);
+      console.log("[Cash Drawer Store] Loaded", movements.length, "movements and", snapshots.length, "snapshots from Supabase");
+      const sortedMovements = movements.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const sortedSnapshots = snapshots.sort((a, b) => new Date(b.recordedAt).getTime() - new Date(a.recordedAt).getTime());
+      set({
+        movements: sortedMovements,
+        snapshots: sortedSnapshots,
+        currentBalance: deriveInitialBalance(movements),
+        lastReconcile: sortedSnapshots[0],
+        isLoading: false,
+        initialized: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("[Cash Drawer Store] Failed to load cash drawer from Supabase", error);
+      set({ isLoading: false, initialized: true, error: message });
+    }
+  },
   registerSale: ({ amount, description, referenceId, employeeId }) => {
     const state = get();
     const movement = createMovement(state, {
@@ -106,6 +176,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
       movements: [movement, ...state.movements],
       currentBalance: movement.balanceAfter,
     });
+    void persistMovement(movement);
     return movement;
   },
   registerExpense: ({ amount, description, employeeId, category }) => {
@@ -121,6 +192,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
       movements: [movement, ...state.movements],
       currentBalance: movement.balanceAfter,
     });
+    void persistMovement(movement);
     return movement;
   },
   registerFloat: ({ amount, description, employeeId }) => {
@@ -135,6 +207,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
       movements: [movement, ...state.movements],
       currentBalance: movement.balanceAfter,
     });
+    void persistMovement(movement);
     return movement;
   },
   registerAdjustment: (amount, description, employeeId) => {
@@ -149,6 +222,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
       movements: [movement, ...state.movements],
       currentBalance: movement.balanceAfter,
     });
+    void persistMovement(movement);
     return movement;
   },
   recordSnapshot: ({ countedAmount, note, employeeId }) => {
@@ -166,6 +240,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
       snapshots: [snapshot, ...state.snapshots],
       lastReconcile: snapshot,
     });
+    void persistSnapshot(snapshot);
     if (difference !== 0) {
       const adjustmentDescription = difference > 0 ? "Überbestand erfasst" : "Fehlbetrag erfasst";
       const movement = createMovement(get(), {
@@ -178,6 +253,7 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
         movements: [movement, ...current.movements],
         currentBalance: movement.balanceAfter,
       }));
+      void persistMovement(movement);
     }
     return snapshot;
   },
@@ -188,5 +264,6 @@ export const useCashDrawerStore = create<CashDrawerState>((set, get) => ({
     }
     return state.movements[index]!.balanceAfter;
   },
-}));
+  };
+});
 

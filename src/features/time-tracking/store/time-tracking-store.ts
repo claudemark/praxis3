@@ -14,6 +14,28 @@ import {
   type SickLeave,
   type CalendarDayEntry,
 } from "@/data/time-tracking";
+import {
+  fetchClockRecordsFromSupabase,
+  createClockRecordInSupabase,
+  updateClockRecordInSupabase,
+  deleteClockRecordFromSupabase,
+  fetchShiftAssignmentsFromSupabase,
+  createShiftAssignmentInSupabase,
+  updateShiftAssignmentInSupabase,
+  deleteShiftAssignmentFromSupabase,
+  fetchVacationRequestsFromSupabase,
+  createVacationRequestInSupabase,
+  updateVacationRequestInSupabase,
+  deleteVacationRequestFromSupabase,
+  fetchSickLeavesFromSupabase,
+  createSickLeaveInSupabase,
+  updateSickLeaveInSupabase,
+  deleteSickLeaveFromSupabase,
+  fetchCalendarDaysFromSupabase,
+  createCalendarDayInSupabase,
+  updateCalendarDayInSupabase,
+  deleteCalendarDayFromSupabase,
+} from "@/features/time-tracking/api/time-tracking-api";
 
 export const scheduledBreakDayIndices = [1, 2, 4] as const;
 export const scheduledBreakMinutes = 120;
@@ -44,6 +66,13 @@ interface TimeTrackingState {
   vacationRequests: VacationRequest[];
   sickLeaves: SickLeave[];
   calendarDays: CalendarDayEntry[];
+  isLoading: boolean;
+  error: string | null;
+  initialized: boolean;
+  fetchTimeTracking: () => Promise<void>;
+  persistCreateRecord: (record: DailyClockRecord) => Promise<DailyClockRecord>;
+  persistUpdateRecord: (id: string, record: DailyClockRecord) => Promise<void>;
+  persistDeleteRecord: (id: string) => Promise<void>;
   clockIn: (opts: { employeeId: string; device: DeviceType; location: string }) => void;
   clockOut: (opts: { employeeId: string; device: DeviceType; location: string }) => void;
   startBreak: (opts: { employeeId: string; device: DeviceType; location: string }) => void;
@@ -64,142 +93,424 @@ interface TimeTrackingState {
   deleteCalendarDay: (id: string) => void;
 }
 
-export const useTimeTrackingStore = create<TimeTrackingState>((set) => ({
+export const useTimeTrackingStore = create<TimeTrackingState>((set, get) => ({
   clockRecords: initialClockRecords,
   shiftAssignments: initialShiftAssignments,
   vacationRequests: initialVacationRequests,
   sickLeaves: initialSickLeaves,
   calendarDays: initialCalendarDays,
-  clockIn: ({ employeeId, device, location }) =>
-    set((state) => ({
-      clockRecords: upsertClockEvent(state.clockRecords, employeeId, {
+  isLoading: false,
+  error: null,
+  initialized: false,
+
+  // ===========================
+  // Supabase Sync
+  // ===========================
+  fetchTimeTracking: async () => {
+    console.log("🔄 [TimeTracking Store] Starting fetchTimeTracking...");
+    set({ isLoading: true, error: null });
+    try {
+      const [records, shifts, vacations, sickLeaves, calendarDays] = await Promise.all([
+        fetchClockRecordsFromSupabase(),
+        fetchShiftAssignmentsFromSupabase(),
+        fetchVacationRequestsFromSupabase(),
+        fetchSickLeavesFromSupabase(),
+        fetchCalendarDaysFromSupabase(),
+      ]);
+      console.log("✅ [TimeTracking Store] Loaded all time tracking data:", {
+        clockRecords: records.length,
+        shifts: shifts.length,
+        vacations: vacations.length,
+        sickLeaves: sickLeaves.length,
+        calendarDays: calendarDays.length,
+      });
+      set({
+        clockRecords: records,
+        shiftAssignments: shifts,
+        vacationRequests: vacations,
+        sickLeaves: sickLeaves,
+        calendarDays: calendarDays,
+        initialized: true,
+        isLoading: false,
+      });
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Failed to fetch time tracking data";
+      console.error("❌ [TimeTracking Store] fetchTimeTracking error:", errorMsg);
+      set({ error: errorMsg, isLoading: false });
+    }
+  },
+
+  // Helper: persist create
+  persistCreateRecord: async (record: DailyClockRecord) => {
+    try {
+      console.log("📤 [TimeTracking Store] Persisting new clock record:", record);
+      const created = await createClockRecordInSupabase(record);
+      console.log("✅ [TimeTracking Store] Clock record created in Supabase:", created.id);
+      return created;
+    } catch (err) {
+      console.error("❌ [TimeTracking Store] persistCreateRecord error:", err);
+      throw err;
+    }
+  },
+
+  // Helper: persist update
+  persistUpdateRecord: async (id: string, record: DailyClockRecord) => {
+    try {
+      console.log("📤 [TimeTracking Store] Persisting update for clock record:", id);
+      await updateClockRecordInSupabase(id, record);
+      console.log("✅ [TimeTracking Store] Clock record updated in Supabase:", id);
+    } catch (err) {
+      console.error("❌ [TimeTracking Store] persistUpdateRecord error:", err);
+      throw err;
+    }
+  },
+
+  // Helper: persist delete
+  persistDeleteRecord: async (id: string) => {
+    try {
+      console.log("📤 [TimeTracking Store] Deleting clock record:", id);
+      await deleteClockRecordFromSupabase(id);
+      console.log("✅ [TimeTracking Store] Clock record deleted from Supabase:", id);
+    } catch (err) {
+      console.error("❌ [TimeTracking Store] persistDeleteRecord error:", err);
+      throw err;
+    }
+  },
+
+  // ===========================
+  // Clock In/Out/Break
+  // ===========================
+  clockIn: ({ employeeId, device, location }) => {
+    const state = get();
+    set((currentState) => {
+      const updatedRecords = upsertClockEvent(currentState.clockRecords, employeeId, {
         id: nanoid(),
         type: "clock-in",
         timestamp: new Date().toISOString(),
         device,
         location,
-      }),
-    })),
-  clockOut: ({ employeeId, device, location }) =>
-    set((state) => ({
-      clockRecords: upsertClockEvent(state.clockRecords, employeeId, {
+      });
+
+      // Persist to Supabase
+      const today = new Date().toISOString().slice(0, 10);
+      const record = updatedRecords.find(
+        (r) => r.employeeId === employeeId && r.date === today
+      );
+      if (record) {
+        // Check if record exists in state (update) or is new (create)
+        const existingRecord = currentState.clockRecords.find(
+          (r) => r.id === record.id
+        );
+        if (existingRecord) {
+          state.persistUpdateRecord(record.id, record).catch((err: Error) =>
+            console.error("❌ Failed to persist clock-in update:", err)
+          );
+        } else {
+          state.persistCreateRecord(record).catch((err: Error) =>
+            console.error("❌ Failed to persist clock-in create:", err)
+          );
+        }
+      }
+
+      return { clockRecords: updatedRecords };
+    });
+  },
+  clockOut: ({ employeeId, device, location }) => {
+    const state = get();
+    set((currentState) => {
+      const updatedRecords = upsertClockEvent(currentState.clockRecords, employeeId, {
         id: nanoid(),
         type: "clock-out",
         timestamp: new Date().toISOString(),
         device,
         location,
-      }),
-    })),
-  startBreak: ({ employeeId, device, location }) =>
-    set((state) => ({
-      clockRecords: upsertClockEvent(state.clockRecords, employeeId, {
+      });
+
+      // Persist to Supabase
+      const today = new Date().toISOString().slice(0, 10);
+      const record = updatedRecords.find(
+        (r) => r.employeeId === employeeId && r.date === today
+      );
+      if (record) {
+        const existingRecord = currentState.clockRecords.find(
+          (r) => r.id === record.id
+        );
+        if (existingRecord) {
+          state.persistUpdateRecord(record.id, record).catch((err: Error) =>
+            console.error("❌ Failed to persist clock-out update:", err)
+          );
+        } else {
+          state.persistCreateRecord(record).catch((err: Error) =>
+            console.error("❌ Failed to persist clock-out create:", err)
+          );
+        }
+      }
+
+      return { clockRecords: updatedRecords };
+    });
+  },
+  startBreak: ({ employeeId, device, location }) => {
+    const state = get();
+    set((currentState) => {
+      const updatedRecords = upsertClockEvent(currentState.clockRecords, employeeId, {
         id: nanoid(),
         type: "break-start",
         timestamp: new Date().toISOString(),
         device,
         location,
-      }),
-    })),
-  endBreak: ({ employeeId, device, location }) =>
-    set((state) => ({
-      clockRecords: upsertClockEvent(state.clockRecords, employeeId, {
+      });
+
+      // Persist to Supabase
+      const today = new Date().toISOString().slice(0, 10);
+      const record = updatedRecords.find(
+        (r) => r.employeeId === employeeId && r.date === today
+      );
+      if (record) {
+        const existingRecord = currentState.clockRecords.find(
+          (r) => r.id === record.id
+        );
+        if (existingRecord) {
+          state.persistUpdateRecord(record.id, record).catch((err: Error) =>
+            console.error("❌ Failed to persist break-start update:", err)
+          );
+        } else {
+          state.persistCreateRecord(record).catch((err: Error) =>
+            console.error("❌ Failed to persist break-start create:", err)
+          );
+        }
+      }
+
+      return { clockRecords: updatedRecords };
+    });
+  },
+  endBreak: ({ employeeId, device, location }) => {
+    const state = get();
+    set((currentState) => {
+      const updatedRecords = upsertClockEvent(currentState.clockRecords, employeeId, {
         id: nanoid(),
         type: "break-end",
         timestamp: new Date().toISOString(),
         device,
         location,
-      }),
-    })),
-  moveShift: (shiftId, slot) =>
-    set((state) => ({
-      shiftAssignments: state.shiftAssignments.map((shift) =>
+      });
+
+      // Persist to Supabase
+      const today = new Date().toISOString().slice(0, 10);
+      const record = updatedRecords.find(
+        (r) => r.employeeId === employeeId && r.date === today
+      );
+      if (record) {
+        const existingRecord = currentState.clockRecords.find(
+          (r) => r.id === record.id
+        );
+        if (existingRecord) {
+          state.persistUpdateRecord(record.id, record).catch((err: Error) =>
+            console.error("❌ Failed to persist break-end update:", err)
+          );
+        } else {
+          state.persistCreateRecord(record).catch((err: Error) =>
+            console.error("❌ Failed to persist break-end create:", err)
+          );
+        }
+      }
+
+      return { clockRecords: updatedRecords };
+    });
+  },
+  moveShift: (shiftId, slot) => {
+    set((currentState) => {
+      const updatedShifts = currentState.shiftAssignments.map((shift) =>
         shift.id === shiftId
           ? {
               ...shift,
               slot,
-              status: slot === "day" ? shift.status : "geplant",
+              status: (slot === "day" ? shift.status : "geplant") as "geplant" | "bestätigt" | "offen",
             }
           : shift,
-      ),
-    })),
-  updateShiftStatus: (shiftId, status) =>
-    set((state) => ({
-      shiftAssignments: state.shiftAssignments.map((shift) =>
+      );
+      
+      // Persist to Supabase
+      const updatedShift = updatedShifts.find((s) => s.id === shiftId);
+      if (updatedShift) {
+        updateShiftAssignmentInSupabase(shiftId, updatedShift).catch((err: Error) =>
+          console.error("❌ Failed to persist shift move:", err)
+        );
+      }
+      
+      return { shiftAssignments: updatedShifts };
+    });
+  },
+  updateShiftStatus: (shiftId, status) => {
+    set((currentState) => {
+      const updatedShifts = currentState.shiftAssignments.map((shift) =>
         shift.id === shiftId ? { ...shift, status } : shift,
-      ),
-    })),
-  submitVacationRequest: ({ employeeId, from, to, comment }) =>
-    set((state) => ({
-      vacationRequests: [
-        ...state.vacationRequests,
-        {
-          id: nanoid(),
-          employeeId,
-          from,
-          to,
-          comment,
-          status: "Neu",
-        },
-      ],
-    })),
-  updateVacationStatus: (id, status) =>
-    set((state) => ({
-      vacationRequests: state.vacationRequests.map((request) =>
-        request.id === id ? { ...request, status } : request,
-      ),
-    })),
-  submitSickLeave: ({ employeeId, from, to, documentUrl }) =>
-    set((state) => ({
-      sickLeaves: [
-        ...state.sickLeaves,
-        {
-          id: nanoid(),
-          employeeId,
-          from,
-          to,
-          documentUrl,
-          status: documentUrl ? "Bestätigt" : "Gemeldet",
-        },
-      ],
-    })),
-  updateSickLeaveStatus: (id, status, documentUrl) =>
-    set((state) => ({
-      sickLeaves: state.sickLeaves.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              status,
-              documentUrl: documentUrl ?? entry.documentUrl,
-            }
-          : entry,
-      ),
-    })),
-  removeShift: (shiftId) =>
-    set((state) => ({
-      shiftAssignments: state.shiftAssignments.filter((shift) => shift.id !== shiftId),
-    })),
-  deleteClockEvent: (recordId, eventId) =>
-    set((state) => ({
-      clockRecords: state.clockRecords
+      );
+      
+      // Persist to Supabase
+      updateShiftAssignmentInSupabase(shiftId, { status }).catch((err: Error) =>
+        console.error("❌ Failed to persist shift status update:", err)
+      );
+      
+      return { shiftAssignments: updatedShifts };
+    });
+  },
+  submitVacationRequest: ({ employeeId, from, to, comment }) => {
+    set((state) => {
+      const newRequest: VacationRequest = {
+        id: nanoid(),
+        employeeId,
+        from,
+        to,
+        comment,
+        status: "Neu",
+      };
+      
+      // Persist to Supabase
+      createVacationRequestInSupabase(newRequest).catch((err: Error) =>
+        console.error("❌ Failed to persist vacation request:", err)
+      );
+      
+      return {
+        vacationRequests: [...state.vacationRequests, newRequest],
+      };
+    });
+  },
+  updateVacationStatus: (id, status) => {
+    set((state) => {
+      // Persist to Supabase
+      updateVacationRequestInSupabase(id, { status }).catch((err: Error) =>
+        console.error("❌ Failed to persist vacation status update:", err)
+      );
+      
+      return {
+        vacationRequests: state.vacationRequests.map((request) =>
+          request.id === id ? { ...request, status } : request,
+        ),
+      };
+    });
+  },
+  submitSickLeave: ({ employeeId, from, to, documentUrl }) => {
+    set((state) => {
+      const newLeave: SickLeave = {
+        id: nanoid(),
+        employeeId,
+        from,
+        to,
+        documentUrl,
+        status: documentUrl ? "Bestätigt" : "Gemeldet",
+      };
+      
+      // Persist to Supabase
+      createSickLeaveInSupabase(newLeave).catch((err: Error) =>
+        console.error("❌ Failed to persist sick leave:", err)
+      );
+      
+      return {
+        sickLeaves: [...state.sickLeaves, newLeave],
+      };
+    });
+  },
+  updateSickLeaveStatus: (id, status, documentUrl) => {
+    set((state) => {
+      const updates = {
+        status,
+        ...(documentUrl !== undefined && { documentUrl }),
+      };
+      
+      // Persist to Supabase
+      updateSickLeaveInSupabase(id, updates).catch((err: Error) =>
+        console.error("❌ Failed to persist sick leave status update:", err)
+      );
+      
+      return {
+        sickLeaves: state.sickLeaves.map((entry) =>
+          entry.id === id
+            ? {
+                ...entry,
+                status,
+                documentUrl: documentUrl ?? entry.documentUrl,
+              }
+            : entry,
+        ),
+      };
+    });
+  },
+  removeShift: (shiftId) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteShiftAssignmentFromSupabase(shiftId).catch((err: Error) =>
+        console.error("❌ Failed to persist shift deletion:", err)
+      );
+      
+      return {
+        shiftAssignments: state.shiftAssignments.filter((shift) => shift.id !== shiftId),
+      };
+    });
+  },
+  deleteClockEvent: (recordId, eventId) => {
+    const state = get();
+    set((currentState) => {
+      const updatedRecords = currentState.clockRecords
         .map((record) =>
           record.id === recordId
             ? { ...record, events: record.events.filter((event) => event.id !== eventId) }
             : record,
         )
-        .filter((record) => record.events.length > 0),
-    })),
-  deleteClockRecord: (recordId) =>
-    set((state) => ({
-      clockRecords: state.clockRecords.filter((record) => record.id !== recordId),
-    })),
-  deleteVacationRequest: (id) =>
-    set((state) => ({
-      vacationRequests: state.vacationRequests.filter((request) => request.id !== id),
-    })),
-  deleteSickLeave: (id) =>
-    set((state) => ({
-      sickLeaves: state.sickLeaves.filter((entry) => entry.id !== id),
-    })),
+        .filter((record) => record.events.length > 0);
+
+      // Persist update to Supabase
+      const updatedRecord = updatedRecords.find((r) => r.id === recordId);
+      if (updatedRecord) {
+        state.persistUpdateRecord(recordId, updatedRecord).catch((err: Error) =>
+          console.error("❌ Failed to persist clock event deletion:", err)
+        );
+      } else {
+        // Record no longer has events, delete it
+        state.persistDeleteRecord(recordId).catch((err: Error) =>
+          console.error("❌ Failed to persist clock record deletion:", err)
+        );
+      }
+
+      return { clockRecords: updatedRecords };
+    });
+  },
+  deleteClockRecord: (recordId) => {
+    const state = get();
+    set((currentState) => {
+      // Persist deletion to Supabase
+      state.persistDeleteRecord(recordId).catch((err: Error) =>
+        console.error("❌ Failed to persist clock record deletion:", err)
+      );
+
+      return {
+        clockRecords: currentState.clockRecords.filter((record) => record.id !== recordId),
+      };
+    });
+  },
+  deleteVacationRequest: (id) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteVacationRequestFromSupabase(id).catch((err: Error) =>
+        console.error("❌ Failed to persist vacation request deletion:", err)
+      );
+      
+      return {
+        vacationRequests: state.vacationRequests.filter((request) => request.id !== id),
+      };
+    });
+  },
+  deleteSickLeave: (id) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteSickLeaveFromSupabase(id).catch((err: Error) =>
+        console.error("❌ Failed to persist sick leave deletion:", err)
+      );
+      
+      return {
+        sickLeaves: state.sickLeaves.filter((entry) => entry.id !== id),
+      };
+    });
+  },
   addCalendarDay: ({ id, date, label, type, description, createdBy, createdAt, updatedAt }) => {
     const entry: CalendarDayEntry = {
       id: id?.trim() || `cal-${nanoid(6)}`,
@@ -211,28 +522,58 @@ export const useTimeTrackingStore = create<TimeTrackingState>((set) => ({
       createdAt: createdAt ?? new Date().toISOString(),
       updatedAt,
     };
+    
+    // Persist to Supabase
+    createCalendarDayInSupabase(entry).catch((err: Error) =>
+      console.error("❌ Failed to persist calendar day:", err)
+    );
+    
     set((state) => ({ calendarDays: [entry, ...state.calendarDays] }));
     return entry;
   },
-  updateCalendarDay: (id, changes) =>
-    set((state) => ({
-      calendarDays: state.calendarDays.map((entry) =>
-        entry.id === id
-          ? {
-              ...entry,
-              ...changes,
-              label: changes.label?.trim() ?? entry.label,
-              description: changes.description?.trim() || entry.description,
-              createdBy: changes.createdBy?.trim() || entry.createdBy,
-              updatedAt: changes.updatedAt ?? new Date().toISOString(),
-            }
-          : entry,
-      ),
-    })),
-  deleteCalendarDay: (id) =>
-    set((state) => ({
-      calendarDays: state.calendarDays.filter((entry) => entry.id !== id),
-    })),
+  updateCalendarDay: (id, changes) => {
+    set((state) => {
+      const updates = {
+        ...changes,
+        label: changes.label?.trim(),
+        description: changes.description?.trim(),
+        createdBy: changes.createdBy?.trim(),
+        updatedAt: changes.updatedAt ?? new Date().toISOString(),
+      };
+      
+      // Persist to Supabase
+      updateCalendarDayInSupabase(id, updates).catch((err: Error) =>
+        console.error("❌ Failed to persist calendar day update:", err)
+      );
+      
+      return {
+        calendarDays: state.calendarDays.map((entry) =>
+          entry.id === id
+            ? {
+                ...entry,
+                ...changes,
+                label: changes.label?.trim() ?? entry.label,
+                description: changes.description?.trim() || entry.description,
+                createdBy: changes.createdBy?.trim() || entry.createdBy,
+                updatedAt: changes.updatedAt ?? new Date().toISOString(),
+              }
+            : entry,
+        ),
+      };
+    });
+  },
+  deleteCalendarDay: (id) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteCalendarDayFromSupabase(id).catch((err: Error) =>
+        console.error("❌ Failed to persist calendar day deletion:", err)
+      );
+      
+      return {
+        calendarDays: state.calendarDays.filter((entry) => entry.id !== id),
+      };
+    });
+  },
 }));
 
 export function computeDailyRecord(record: DailyClockRecord): ComputedRecord {

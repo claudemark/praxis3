@@ -51,7 +51,7 @@ export const primaryNavigation: NavItem[] = [
   },
   {
     id: "billing",
-    label: "Abrechnung",
+    label: "GOÄ /BG Ziffern",
     description: "Intelligente Ziffern & Rechnungen",
     path: "/abrechnung",
     icon: ClipboardList,

@@ -23,6 +23,30 @@ export interface CodeBundle {
   favorite?: boolean;
 }
 
+export interface InvoiceItem {
+  id: string;
+  code: string;
+  bezeichnung: string;
+  quantity: number;
+  amount: number;
+}
+
+export interface Invoice {
+  id: string;
+  patientName: string;
+  patientNumber: string;
+  invoiceDate: string;
+  dueDate: string;
+  totalAmount: number;
+  paidAmount: number;
+  status: "Entwurf" | "Versendet" | "Bezahlt" | "Überfällig" | "Storniert";
+  paymentMethod?: string;
+  notes?: string;
+  items: InvoiceItem[];
+  createdAt: string;
+  updatedAt?: string;
+}
+
 export const goaCodes: GoACode[] = [
   {
     nummer: "3306",

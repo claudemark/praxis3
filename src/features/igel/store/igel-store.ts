@@ -13,6 +13,17 @@ import { useInventoryStore } from "@/features/inventory/store/inventory-store";
 import { useCashDrawerStore } from "@/features/cash-drawer/store/cash-drawer-store";
 import { useEmployeeDirectory } from "@/features/employees/store/employee-store";
 import { computeGoaBreakdown } from "@/features/igel/lib/goa-breakdown";
+import {
+  fetchIgelServicesFromSupabase,
+  fetchIgelTransactionsFromSupabase,
+  createIgelServiceInSupabase,
+  createIgelTransactionInSupabase,
+  updateIgelServiceInSupabase,
+  updateIgelTransactionInSupabase,
+  deleteIgelServiceFromSupabase,
+  deleteIgelTransactionFromSupabase,
+} from "../api/igel-api";
+import { isSupabaseConfigured } from "@/services/supabase-client";
 
 interface RecordSalePayload {
   patient: string;
@@ -41,6 +52,10 @@ type UpdateTransactionPayload = Partial<Omit<IgelTransaction, "id" | "serviceId"
 interface IgelState {
   priceList: IgelPriceListEntry[];
   transactions: IgelTransaction[];
+  isLoading: boolean;
+  error: string | null;
+  initialized: boolean;
+  fetchIgel: () => Promise<void>;
   addPriceListEntry: (payload: AddPriceListEntryPayload) => IgelPriceListEntry;
   updatePriceListEntry: (id: string, changes: UpdatePriceListEntryPayload) => void;
   deletePriceListEntry: (id: string) => void;
@@ -138,9 +153,109 @@ const initialPriceEntries = igelPriceList.map((entry) => ({
 
 const initialTransactions = mapInitialTransactions(initialPriceEntries, initialIgelTransactions);
 
-export const useIgelStore = create<IgelState>((set, get) => ({
+export const useIgelStore = create<IgelState>((set, get) => {
+  const persistService = async (entry: IgelPriceListEntry) => {
+    try {
+      const saved = await createIgelServiceInSupabase(entry);
+      if (saved) {
+        set((state) => ({
+          priceList: state.priceList.map((e) => (e.id === entry.id ? saved : e)),
+        }));
+      }
+    } catch (error) {
+      console.error("[IGeL Store] Failed to persist service", error);
+    }
+  };
+
+  const persistServiceUpdate = async (id: string, changes: Partial<IgelPriceListEntry>) => {
+    try {
+      await updateIgelServiceInSupabase(id, changes);
+    } catch (error) {
+      console.error("[IGeL Store] Failed to update service", error);
+    }
+  };
+
+  const persistServiceDelete = async (id: string) => {
+    try {
+      await deleteIgelServiceFromSupabase(id);
+    } catch (error) {
+      console.error("[IGeL Store] Failed to delete service", error);
+    }
+  };
+
+  const persistTransaction = async (transaction: IgelTransaction) => {
+    console.log("[IGeL Store] persistTransaction called with:", JSON.stringify(transaction, null, 2));
+    try {
+      const saved = await createIgelTransactionInSupabase(transaction);
+      console.log("[IGeL Store] Transaction saved, response:", saved);
+      if (saved) {
+        set((state) => ({
+          transactions: state.transactions.map((t) => (t.id === transaction.id ? saved : t)),
+        }));
+      }
+    } catch (error) {
+      console.error("[IGeL Store] Failed to persist transaction", error);
+      console.error("[IGeL Store] Transaction that failed:", transaction);
+    }
+  };
+
+  const persistTransactionUpdate = async (id: string, changes: Partial<IgelTransaction>) => {
+    try {
+      await updateIgelTransactionInSupabase(id, changes);
+    } catch (error) {
+      console.error("[IGeL Store] Failed to update transaction", error);
+    }
+  };
+
+  const persistTransactionDelete = async (id: string) => {
+    try {
+      await deleteIgelTransactionFromSupabase(id);
+    } catch (error) {
+      console.error("[IGeL Store] Failed to delete transaction", error);
+    }
+  };
+
+  return {
   priceList: initialPriceEntries,
   transactions: initialTransactions,
+  isLoading: false,
+  error: null,
+  initialized: false,
+  fetchIgel: async () => {
+    console.log("[IGeL Store] fetchIgel called, configured:", isSupabaseConfigured);
+    if (!isSupabaseConfigured) {
+      console.log("[IGeL Store] Supabase not configured, using initial data");
+      set({ initialized: true });
+      return;
+    }
+    set({ isLoading: true, error: null });
+    try {
+      console.log("[IGeL Store] Fetching services and transactions from Supabase...");
+      const [services, transactions] = await Promise.all([
+        fetchIgelServicesFromSupabase(),
+        fetchIgelTransactionsFromSupabase(),
+      ]);
+      console.log("[IGeL Store] Loaded", services.length, "services and", transactions.length, "transactions from Supabase");
+      const priceList = services.map((entry) => ({
+        ...entry,
+        goaBreakdown: sanitizeGoaBreakdown(entry.goaBreakdown),
+        receiptTemplate: sanitizeReceiptLines(entry.receiptTemplate),
+      }));
+      const mappedTransactions = mapInitialTransactions(priceList, transactions);
+      console.log("[IGeL Store] Setting state with", priceList.length, "services and", mappedTransactions.length, "transactions");
+      set({
+        priceList,
+        transactions: mappedTransactions,
+        isLoading: false,
+        initialized: true,
+      });
+      console.log("[IGeL Store] fetchIgel completed successfully");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("[IGeL Store] Failed to load IGeL data from Supabase", error);
+      set({ isLoading: false, initialized: true, error: message });
+    }
+  },
   addPriceListEntry: (payload) => {
     const entry: IgelPriceListEntry = {
       id: payload.id ?? generatePriceListId(),
@@ -155,9 +270,10 @@ export const useIgelStore = create<IgelState>((set, get) => ({
       goaBreakdown: sanitizeGoaBreakdown(payload.goaBreakdown),
     };
     set((state) => ({ priceList: [entry, ...state.priceList] }));
+    void persistService(entry);
     return entry;
   },
-  updatePriceListEntry: (id, changes) =>
+  updatePriceListEntry: (id, changes) => {
     set((state) => ({
       priceList: state.priceList.map((entry) =>
         entry.id === id
@@ -175,9 +291,13 @@ export const useIgelStore = create<IgelState>((set, get) => ({
             }
           : entry,
       ),
-    })),
-  deletePriceListEntry: (id) =>
-    set((state) => ({ priceList: state.priceList.filter((entry) => entry.id !== id) })),
+    }));
+    void persistServiceUpdate(id, changes);
+  },
+  deletePriceListEntry: (id) => {
+    set((state) => ({ priceList: state.priceList.filter((entry) => entry.id !== id) }));
+    void persistServiceDelete(id);
+  },
   recordSale: ({
     patient,
     patientNumber,
@@ -226,6 +346,7 @@ export const useIgelStore = create<IgelState>((set, get) => ({
       goaBreakdown: goaBreakdownLines,
     };
     set((state) => ({ transactions: [transaction, ...state.transactions] }));
+    void persistTransaction(transaction);
 
     const adjustStock = useInventoryStore.getState().adjustStock;
     (service.materials ?? []).forEach((material) => {
@@ -251,7 +372,7 @@ export const useIgelStore = create<IgelState>((set, get) => ({
 
     return transaction;
   },
-  updateTransaction: (id, changes) =>
+  updateTransaction: (id, changes) => {
     set((state) => {
       const priceList = get().priceList;
       return {
@@ -295,12 +416,17 @@ export const useIgelStore = create<IgelState>((set, get) => ({
           return next;
         }),
       };
-    }),
-  deleteTransaction: (id) =>
+    });
+    void persistTransactionUpdate(id, changes);
+  },
+  deleteTransaction: (id) => {
     set((state) => ({
       transactions: state.transactions.filter((transaction) => transaction.id !== id),
-    })),
-}));
+    }));
+    void persistTransactionDelete(id);
+  },
+  };
+});
 
 export function selectTransactionsByPeriod(
   transactions: IgelTransaction[],

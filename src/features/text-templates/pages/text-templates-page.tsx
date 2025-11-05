@@ -2,9 +2,7 @@ import { useMemo, useState } from "react";
 import { Copy, Plus, Star, StarOff, Tag, Upload, X } from "lucide-react";
 
 import {
-  favoriteTemplates,
   templateCategories,
-  textTemplates,
   type TemplateStatus,
   type TemplateVariable,
   type TextTemplate,
@@ -17,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
+import { useTextTemplateStore } from "@/features/text-templates/store/text-templates-store";
 
 const statusMapping: Record<TemplateStatus, { label: string; className: string }> = {
   entwurf: { label: "Entwurf", className: "bg-warning/25 text-warning-foreground" },
@@ -25,11 +24,17 @@ const statusMapping: Record<TemplateStatus, { label: string; className: string }
 };
 
 export function TextTemplatesPage() {
-  const [templates, setTemplates] = useState<TextTemplate[]>(textTemplates);
-  const [favorites, setFavorites] = useState<string[]>(favoriteTemplates);
+  // Use Zustand store instead of local state
+  const templates = useTextTemplateStore((state) => state.templates);
+  const favorites = useTextTemplateStore((state) => state.favorites);
+  const createTemplate = useTextTemplateStore((state) => state.createTemplate);
+  const updateTemplate = useTextTemplateStore((state) => state.updateTemplate);
+  const deleteTemplate = useTextTemplateStore((state) => state.deleteTemplate);
+  const toggleFavorite = useTextTemplateStore((state) => state.toggleFavorite);
+  
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<string>("all");
-  const [selectedTemplate, setSelectedTemplate] = useState<TextTemplate>(templates[0]!);
+  const [selectedTemplate, setSelectedTemplate] = useState<TextTemplate | null>(templates[0] || null);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
 
@@ -71,7 +76,7 @@ export function TextTemplatesPage() {
   };
 
   const handleCreateTemplate = (template: TextTemplate) => {
-    setTemplates((prev) => [template, ...prev]);
+    createTemplate(template);
     setSelectedTemplate(template);
     setShowCreateModal(false);
   };
@@ -136,7 +141,7 @@ export function TextTemplatesPage() {
                   className={cn(
                     "flex w-full flex-col gap-2 px-5 py-4 text-left transition",
                     "hover:bg-primary/5",
-                    selectedTemplate.id === template.id ? "bg-primary/10" : "bg-white/90",
+                    selectedTemplate?.id === template.id ? "bg-primary/10" : "bg-white/90",
                   )}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -160,11 +165,7 @@ export function TextTemplatesPage() {
                         className="rounded-full border border-transparent"
                         onClick={(event) => {
                           event.stopPropagation();
-                          setFavorites((prev) =>
-                            prev.includes(template.id)
-                              ? prev.filter((fav) => fav !== template.id)
-                              : [...prev, template.id],
-                          );
+                          toggleFavorite(template.id);
                         }}
                       >
                         {isFavorite ? (
@@ -193,11 +194,13 @@ export function TextTemplatesPage() {
           </CardContent>
         </Card>
 
-        <TemplateDetail
-          template={selectedTemplate}
-          copied={copiedId === selectedTemplate.id}
-          onCopy={(content) => handleCopy(content, selectedTemplate.id)}
-        />
+        {selectedTemplate && (
+          <TemplateDetail
+            template={selectedTemplate}
+            copied={copiedId === selectedTemplate.id}
+            onCopy={(content) => handleCopy(content, selectedTemplate.id)}
+          />
+        )}
       </div>
 
       {showCreateModal ? (

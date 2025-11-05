@@ -8,6 +8,13 @@ export const supabaseConfig = {
 
 export const isSupabaseConfigured = Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 
+// Debug logging
+console.log("[Supabase Config]", {
+  configured: isSupabaseConfigured,
+  url: SUPABASE_URL ? `${SUPABASE_URL.substring(0, 30)}...` : "NOT SET",
+  hasKey: !!SUPABASE_ANON_KEY,
+});
+
 export class SupabaseNotConfiguredError extends Error {
   constructor() {
     super("Supabase is not configured. Please set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.");

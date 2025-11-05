@@ -53,14 +53,16 @@ const initialProfiles = seedEmployees.map(enhanceEmployee);
 export const useEmployeeDirectory = create<EmployeeStoreState>((set, get) => {
   const persistCreate = async (profile: EmployeeProfile) => {
     try {
+      console.log("[Employee Store] Persisting new employee:", profile.name);
       const saved = await createEmployeeInSupabase(profile);
       if (saved) {
+        console.log("[Employee Store] Employee persisted, updating local state");
         set((state) => ({
           employees: state.employees.map((employee) => (employee.id === profile.id ? saved : employee)),
         }));
       }
     } catch (error) {
-      console.error("Failed to persist employee in Supabase", error);
+      console.error("[Employee Store] Failed to persist employee in Supabase", error);
     }
   };
 
@@ -94,13 +96,16 @@ export const useEmployeeDirectory = create<EmployeeStoreState>((set, get) => {
     error: null,
     initialized: false,
     fetchEmployees: async () => {
+      console.log("[Employee Store] fetchEmployees called, configured:", isSupabaseConfigured);
       if (!isSupabaseConfigured) {
+        console.log("[Employee Store] Supabase not configured, using mock data");
         set({ initialized: true });
         return;
       }
       set({ isLoading: true, error: null });
       try {
         const remoteEmployees = await fetchEmployeesFromSupabase();
+        console.log("[Employee Store] Loaded", remoteEmployees.length, "employees from Supabase");
         set({
           employees: remoteEmployees,
           isLoading: false,
@@ -108,7 +113,7 @@ export const useEmployeeDirectory = create<EmployeeStoreState>((set, get) => {
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : "Unbekannter Fehler";
-        console.error("Failed to load employees from Supabase", error);
+        console.error("[Employee Store] Failed to load employees from Supabase", error);
         set({ isLoading: false, initialized: true, error: message });
       }
     },

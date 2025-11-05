@@ -9,6 +9,21 @@ import {
   type GeneralTaskCadence,
   type SopChecklist,
 } from "@/data/tasks";
+import {
+  fetchTasksFromSupabase,
+  createTaskInSupabase,
+  updateTaskInSupabase,
+  deleteTaskInSupabase,
+  fetchGeneralTasksFromSupabase,
+  createGeneralTaskInSupabase,
+  updateGeneralTaskInSupabase,
+  deleteGeneralTaskFromSupabase,
+  fetchSopChecklistsFromSupabase,
+  createSopChecklistInSupabase,
+  updateSopChecklistInSupabase,
+  deleteSopChecklistFromSupabase,
+} from "@/features/tasks/api/task-api";
+import { isSupabaseConfigured } from "@/services/supabase-client";
 
 export type TaskStatus = "todo" | "in-progress" | "review" | "done";
 export type TaskPriority = "low" | "medium" | "high" | "urgent";
@@ -58,6 +73,10 @@ interface TaskStoreState {
   tasks: TaskItem[];
   generalTasks: GeneralEmployeeTask[];
   sopChecklists: SopChecklist[];
+  isLoading: boolean;
+  error: string | null;
+  initialized: boolean;
+  fetchTasks: () => Promise<void>;
   createTask: (payload: {
     title: string;
     description: string;
@@ -179,10 +198,79 @@ const initialTasks: TaskItem[] = [
   },
 ];
 
-export const useTaskStore = create<TaskStoreState>((set) => ({
+export const useTaskStore = create<TaskStoreState>((set) => {
+  const persistCreate = async (task: TaskItem) => {
+    try {
+      const saved = await createTaskInSupabase(task);
+      if (saved) {
+        set((state) => ({
+          tasks: state.tasks.map((t) => (t.id === task.id ? saved : t)),
+        }));
+      }
+    } catch (error) {
+      console.error("[Task Store] Failed to persist task", error);
+    }
+  };
+
+  const persistUpdate = async (id: string, changes: Partial<TaskItem>) => {
+    try {
+      const saved = await updateTaskInSupabase(id, changes);
+      if (saved) {
+        set((state) => ({
+          tasks: state.tasks.map((t) => (t.id === id ? saved : t)),
+        }));
+      }
+    } catch (error) {
+      console.error("[Task Store] Failed to update task", error);
+    }
+  };
+
+  const persistDelete = async (id: string) => {
+    try {
+      await deleteTaskInSupabase(id);
+    } catch (error) {
+      console.error("[Task Store] Failed to delete task", error);
+    }
+  };
+
+  return {
   tasks: initialTasks,
   generalTasks: initialGeneralTasks,
   sopChecklists: initialSopChecklists,
+  isLoading: false,
+  error: null,
+  initialized: false,
+  fetchTasks: async () => {
+    console.log("[Task Store] fetchTasks called, configured:", isSupabaseConfigured);
+    if (!isSupabaseConfigured) {
+      set({ initialized: true });
+      return;
+    }
+    set({ isLoading: true, error: null });
+    try {
+      const [tasks, generalTasks, sopChecklists] = await Promise.all([
+        fetchTasksFromSupabase(),
+        fetchGeneralTasksFromSupabase(),
+        fetchSopChecklistsFromSupabase(),
+      ]);
+      console.log("[Task Store] Loaded from Supabase:", {
+        tasks: tasks.length,
+        generalTasks: generalTasks.length,
+        sopChecklists: sopChecklists.length,
+      });
+      set({
+        tasks,
+        generalTasks,
+        sopChecklists,
+        isLoading: false,
+        initialized: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      console.error("[Task Store] Failed to load tasks from Supabase", error);
+      set({ isLoading: false, initialized: true, error: message });
+    }
+  },
   createTask: ({ title, description, status = "todo", priority, dueDate, assigneeId, recurrence, tags }) => {
     const newTask: TaskItem = {
       id: `TASK-${nanoid(4).toUpperCase()}`,
@@ -199,32 +287,38 @@ export const useTaskStore = create<TaskStoreState>((set) => ({
       checklist: [],
     };
     set((state) => ({ tasks: [newTask, ...state.tasks] }));
+    void persistCreate(newTask);
     return newTask;
   },
-  updateTaskStatus: (taskId, status) =>
+  updateTaskStatus: (taskId, status) => {
     set((state) => ({
       tasks: state.tasks.map((task) => (task.id === taskId ? { ...task, status } : task)),
-    })),
-  addComment: (taskId, authorId, message) =>
+    }));
+    void persistUpdate(taskId, { status });
+  },
+  addComment: (taskId, authorId, message) => {
+    const newComment = {
+      id: nanoid(),
+      authorId,
+      message,
+      createdAt: new Date().toISOString(),
+    };
     set((state) => ({
       tasks: state.tasks.map((task) =>
         task.id === taskId
           ? {
               ...task,
-              comments: [
-                ...task.comments,
-                {
-                  id: nanoid(),
-                  authorId,
-                  message,
-                  createdAt: new Date().toISOString(),
-                },
-              ],
+              comments: [...task.comments, newComment],
             }
           : task,
       ),
-    })),
-  toggleChecklistItem: (taskId, checklistId) =>
+    }));
+    const task = useTaskStore.getState().tasks.find(t => t.id === taskId);
+    if (task) {
+      void persistUpdate(taskId, { comments: [...task.comments, newComment] });
+    }
+  },
+  toggleChecklistItem: (taskId, checklistId) => {
     set((state) => ({
       tasks: state.tasks.map((task) =>
         task.id === taskId
@@ -236,12 +330,19 @@ export const useTaskStore = create<TaskStoreState>((set) => ({
             }
           : task,
       ),
-    })),
-  assignTask: (taskId, employeeId) =>
+    }));
+    const task = useTaskStore.getState().tasks.find(t => t.id === taskId);
+    if (task) {
+      void persistUpdate(taskId, { checklist: task.checklist });
+    }
+  },
+  assignTask: (taskId, employeeId) => {
     set((state) => ({
       tasks: state.tasks.map((task) => (task.id === taskId ? { ...task, assigneeId: employeeId } : task)),
-    })),
-  updateTask: (taskId, changes) =>
+    }));
+    void persistUpdate(taskId, { assigneeId: employeeId });
+  },
+  updateTask: (taskId, changes) => {
     set((state) => ({
       tasks: state.tasks.map((task) =>
         task.id === taskId
@@ -253,11 +354,15 @@ export const useTaskStore = create<TaskStoreState>((set) => ({
             }
           : task,
       ),
-    })),
-  deleteTask: (taskId) =>
+    }));
+    void persistUpdate(taskId, changes);
+  },
+  deleteTask: (taskId) => {
     set((state) => ({
       tasks: state.tasks.filter((task) => task.id !== taskId),
-    })),
+    }));
+    void persistDelete(taskId);
+  },
   addGeneralTask: ({ id, employeeId, title, description, cadence, active = true, createdAt, updatedAt }) => {
     const task: GeneralEmployeeTask = {
       id: id?.trim() || `gentask-${nanoid(6)}`,
@@ -269,27 +374,56 @@ export const useTaskStore = create<TaskStoreState>((set) => ({
       createdAt: createdAt ?? new Date().toISOString(),
       updatedAt,
     };
+    
+    // Persist to Supabase
+    createGeneralTaskInSupabase(task).catch((err: Error) =>
+      console.error("❌ Failed to persist general task:", err)
+    );
+    
     set((state) => ({ generalTasks: [task, ...state.generalTasks] }));
     return task;
   },
-  updateGeneralTask: (taskId, changes) =>
-    set((state) => ({
-      generalTasks: state.generalTasks.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              ...changes,
-              title: changes.title?.trim() ?? task.title,
-              description: changes.description?.trim() ?? task.description,
-              updatedAt: changes.updatedAt ?? new Date().toISOString(),
-            }
-          : task,
-      ),
-    })),
-  deleteGeneralTask: (taskId) =>
-    set((state) => ({
-      generalTasks: state.generalTasks.filter((task) => task.id !== taskId),
-    })),
+  updateGeneralTask: (taskId, changes) => {
+    set((state) => {
+      const updates = {
+        ...changes,
+        title: changes.title?.trim(),
+        description: changes.description?.trim(),
+        updatedAt: changes.updatedAt ?? new Date().toISOString(),
+      };
+      
+      // Persist to Supabase
+      updateGeneralTaskInSupabase(taskId, updates).catch((err: Error) =>
+        console.error("❌ Failed to persist general task update:", err)
+      );
+      
+      return {
+        generalTasks: state.generalTasks.map((task) =>
+          task.id === taskId
+            ? {
+                ...task,
+                ...changes,
+                title: changes.title?.trim() ?? task.title,
+                description: changes.description?.trim() ?? task.description,
+                updatedAt: changes.updatedAt ?? new Date().toISOString(),
+              }
+            : task,
+        ),
+      };
+    });
+  },
+  deleteGeneralTask: (taskId) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteGeneralTaskFromSupabase(taskId).catch((err: Error) =>
+        console.error("❌ Failed to persist general task deletion:", err)
+      );
+      
+      return {
+        generalTasks: state.generalTasks.filter((task) => task.id !== taskId),
+      };
+    });
+  },
   addSopChecklist: ({ id, name, steps, ownerId, lastAudit, compliance, category, description, updatedAt }) => {
     const checklist: SopChecklist = {
       id: id?.trim() || `sop-${nanoid(6)}`,
@@ -302,33 +436,66 @@ export const useTaskStore = create<TaskStoreState>((set) => ({
       description: description?.trim() || undefined,
       updatedAt: updatedAt ?? new Date().toISOString(),
     };
+    
+    // Persist to Supabase
+    createSopChecklistInSupabase(checklist).catch((err: Error) =>
+      console.error("❌ Failed to persist SOP checklist:", err)
+    );
+    
     set((state) => ({ sopChecklists: [checklist, ...state.sopChecklists] }));
     return checklist;
   },
-  updateSopChecklist: (id, changes) =>
-    set((state) => ({
-      sopChecklists: state.sopChecklists.map((checklist) =>
-        checklist.id === id
-          ? {
-              ...checklist,
-              ...changes,
-              name: changes.name?.trim() ?? checklist.name,
-              ownerId: changes.ownerId?.trim() ?? checklist.ownerId,
-              category: changes.category?.trim() || checklist.category,
-              description: changes.description?.trim() || checklist.description,
-              steps: changes.steps
-                ? changes.steps.map((step) => step.trim()).filter(Boolean)
-                : checklist.steps,
-              updatedAt: changes.updatedAt ?? new Date().toISOString(),
-            }
-          : checklist,
-      ),
-    })),
-  deleteSopChecklist: (id) =>
-    set((state) => ({
-      sopChecklists: state.sopChecklists.filter((entry) => entry.id !== id),
-    })),
-}));
+  updateSopChecklist: (id, changes) => {
+    set((state) => {
+      const updates = {
+        ...changes,
+        name: changes.name?.trim(),
+        ownerId: changes.ownerId?.trim(),
+        category: changes.category?.trim(),
+        description: changes.description?.trim(),
+        steps: changes.steps?.map((step) => step.trim()).filter(Boolean),
+        updatedAt: changes.updatedAt ?? new Date().toISOString(),
+      };
+      
+      // Persist to Supabase
+      updateSopChecklistInSupabase(id, updates).catch((err: Error) =>
+        console.error("❌ Failed to persist SOP checklist update:", err)
+      );
+      
+      return {
+        sopChecklists: state.sopChecklists.map((checklist) =>
+          checklist.id === id
+            ? {
+                ...checklist,
+                ...changes,
+                name: changes.name?.trim() ?? checklist.name,
+                ownerId: changes.ownerId?.trim() ?? checklist.ownerId,
+                category: changes.category?.trim() || checklist.category,
+                description: changes.description?.trim() || checklist.description,
+                steps: changes.steps
+                  ? changes.steps.map((step) => step.trim()).filter(Boolean)
+                  : checklist.steps,
+                updatedAt: changes.updatedAt ?? new Date().toISOString(),
+              }
+            : checklist,
+        ),
+      };
+    });
+  },
+  deleteSopChecklist: (id) => {
+    set((state) => {
+      // Persist deletion to Supabase
+      deleteSopChecklistFromSupabase(id).catch((err: Error) =>
+        console.error("❌ Failed to persist SOP checklist deletion:", err)
+      );
+      
+      return {
+        sopChecklists: state.sopChecklists.filter((entry) => entry.id !== id),
+      };
+    });
+  },
+  };
+});
 
 export function getPriorityLabel(priority: TaskPriority) {
   switch (priority) {

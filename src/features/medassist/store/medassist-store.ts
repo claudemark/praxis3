@@ -9,6 +9,12 @@ import {
   type MedAssistSession,
 } from "@/data/medassist";
 import type { MedAssistAiSummaryResult } from "@/features/medassist/api/medassist-ai";
+import {
+  fetchMedAssistSessionsFromSupabase,
+  createMedAssistSessionInSupabase,
+  updateMedAssistSessionInSupabase,
+  deleteMedAssistSessionFromSupabase,
+} from "@/features/medassist/api/medassist-api";
 
 const generateSegmentId = () => "seg-" + Date.now();
 const generateSuggestionId = () => "sug-" + Date.now();
@@ -16,6 +22,10 @@ const generateSuggestionId = () => "sug-" + Date.now();
 interface MedAssistState {
   activeSession: MedAssistSession;
   history: MedAssistSession[];
+  isLoading: boolean;
+  error: string | null;
+  initialized: boolean;
+  fetchSessions: () => Promise<void>;
   createSegment: (payload: Omit<MedAssistSegment, "id"> & { id?: string }) => MedAssistSegment;
   updateSegment: (id: string, changes: Partial<Omit<MedAssistSegment, "id">>) => void;
   deleteSegment: (id: string) => void;
@@ -30,10 +40,68 @@ interface MedAssistState {
   deleteHistorySession: (id: string) => void;
 }
 
-export const useMedAssistStore = create<MedAssistState>((set) => ({
-  activeSession: initialSession,
-  history: initialHistory,
-  createSegment: (payload) => {
+export const useMedAssistStore = create<MedAssistState>((set) => {
+  const persistUpdateSession = async (session: MedAssistSession) => {
+    try {
+      await updateMedAssistSessionInSupabase(session.id, session);
+      console.log("[MedAssist Store] Persisted active session update to Supabase:", session.id);
+    } catch (error) {
+      console.error("[MedAssist Store] Failed to persist session update:", error);
+    }
+  };
+
+  const persistCreateHistory = async (session: MedAssistSession) => {
+    try {
+      await createMedAssistSessionInSupabase(session);
+      console.log("[MedAssist Store] Persisted history session to Supabase:", session.id);
+    } catch (error) {
+      console.error("[MedAssist Store] Failed to persist history session:", error);
+    }
+  };
+
+  const persistUpdateHistory = async (id: string, changes: Partial<MedAssistSession>) => {
+    try {
+      await updateMedAssistSessionInSupabase(id, changes);
+      console.log("[MedAssist Store] Persisted history session update to Supabase:", id);
+    } catch (error) {
+      console.error("[MedAssist Store] Failed to persist history session update:", error);
+    }
+  };
+
+  const persistDeleteHistory = async (id: string) => {
+    try {
+      await deleteMedAssistSessionFromSupabase(id);
+      console.log("[MedAssist Store] Persisted history session delete to Supabase:", id);
+    } catch (error) {
+      console.error("[MedAssist Store] Failed to persist history session delete:", error);
+    }
+  };
+
+  return {
+    activeSession: initialSession,
+    history: initialHistory,
+    isLoading: false,
+    error: null,
+    initialized: false,
+    fetchSessions: async () => {
+      console.log("[MedAssist Store] Fetching sessions from Supabase...");
+      set({ isLoading: true, error: null });
+      try {
+        const sessions = await fetchMedAssistSessionsFromSupabase();
+        console.log("[MedAssist Store] Loaded", sessions.length, "sessions from Supabase");
+        // Set the first session as active, rest as history
+        const [active, ...history] = sessions;
+        if (active) {
+          set({ activeSession: active, history, isLoading: false, initialized: true });
+        } else {
+          set({ history: [], isLoading: false, initialized: true });
+        }
+      } catch (error) {
+        console.error("[MedAssist Store] Error fetching sessions:", error);
+        set({ error: error instanceof Error ? error.message : "Failed to fetch sessions", isLoading: false });
+      }
+    },
+    createSegment: (payload) => {
     const segment: MedAssistSegment = {
       ...payload,
       id: payload.id ?? generateSegmentId(),
@@ -65,14 +133,17 @@ export const useMedAssistStore = create<MedAssistState>((set) => ({
         segments: state.activeSession.segments.filter((segment) => segment.id !== id),
       },
     })),
-  updateSessionStatus: (status) =>
-    set((state) => ({
-      activeSession: {
+  updateSessionStatus: (status) => {
+    set((state) => {
+      const updatedSession = {
         ...state.activeSession,
         status,
         lastEdited: new Date().toISOString(),
-      },
-    })),
+      };
+      void persistUpdateSession(updatedSession);
+      return { activeSession: updatedSession };
+    });
+  },
   updateTranscript: (transcript) =>
     set((state) => ({
       activeSession: {
@@ -117,15 +188,22 @@ export const useMedAssistStore = create<MedAssistState>((set) => ({
     set((state) => ({
       activeSession: mergeSummaryWithSession(state.activeSession, summary),
     })),
-  addHistorySession: (session) =>
-    set((state) => ({ history: [session, ...state.history] })),
-  updateHistorySession: (id, changes) =>
+  addHistorySession: (session) => {
+    set((state) => ({ history: [session, ...state.history] }));
+    void persistCreateHistory(session);
+  },
+  updateHistorySession: (id, changes) => {
     set((state) => ({
       history: state.history.map((entry) => (entry.id === id ? { ...entry, ...changes } : entry)),
-    })),
-  deleteHistorySession: (id) =>
-    set((state) => ({ history: state.history.filter((entry) => entry.id !== id) })),
-}));
+    }));
+    void persistUpdateHistory(id, changes);
+  },
+  deleteHistorySession: (id) => {
+    set((state) => ({ history: state.history.filter((entry) => entry.id !== id) }));
+    void persistDeleteHistory(id);
+  },
+  };
+});
 
 function mergeSummaryWithSession(
   session: MedAssistSession,
