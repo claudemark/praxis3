@@ -1,5 +1,5 @@
 import { isSupabaseConfigured, supabaseRequest } from "@/services/supabase-client";
-import type { DailyClockRecord, ClockEvent } from "@/data/time-tracking";
+import type { DailyClockRecord } from "@/data/time-tracking";
 
 // Supabase endpoints
 const CLOCK_RECORDS_ENDPOINT = "/clock_records";

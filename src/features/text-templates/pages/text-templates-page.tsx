@@ -28,8 +28,6 @@ export function TextTemplatesPage() {
   const templates = useTextTemplateStore((state) => state.templates);
   const favorites = useTextTemplateStore((state) => state.favorites);
   const createTemplate = useTextTemplateStore((state) => state.createTemplate);
-  const updateTemplate = useTextTemplateStore((state) => state.updateTemplate);
-  const deleteTemplate = useTextTemplateStore((state) => state.deleteTemplate);
   const toggleFavorite = useTextTemplateStore((state) => state.toggleFavorite);
   
   const [search, setSearch] = useState("");

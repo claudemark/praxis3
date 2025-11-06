@@ -218,7 +218,7 @@ export async function deleteCodeBundleFromSupabase(id: string): Promise<void> {
 
 // ============= BILLING INVOICES =============
 
-import type { Invoice, InvoiceItem } from "@/data/billing";
+import type { Invoice } from "@/data/billing";
 
 const BILLING_INVOICES_ENDPOINT = "/billing_invoices";
 

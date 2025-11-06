@@ -20,7 +20,6 @@ import {
   updateClockRecordInSupabase,
   deleteClockRecordFromSupabase,
   fetchShiftAssignmentsFromSupabase,
-  createShiftAssignmentInSupabase,
   updateShiftAssignmentInSupabase,
   deleteShiftAssignmentFromSupabase,
   fetchVacationRequestsFromSupabase,
